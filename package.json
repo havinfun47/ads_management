@@ -2,6 +2,7 @@
   "name": "ads-management",
   "version": "0.1.0",
   "private": true,
+  "description": "Scale Scientist — Meta ads management & SOP-driven optimization",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
