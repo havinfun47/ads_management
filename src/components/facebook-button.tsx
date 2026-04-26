@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { buildClientSetCookie } from "@/lib/session-shared";
 
 type Status =
   | { kind: "idle" }
@@ -91,24 +92,27 @@ export function FacebookLoginButton({
           body,
           credentials: "same-origin",
         });
-        const setCookieHeader = res.headers.get("set-cookie");
         pushLog(`fetch returned: status=${res.status} ok=${res.ok}`);
-        pushLog(`  set-cookie header (visible to JS? typically not): ${setCookieHeader ?? "null"}`);
-        pushLog(`  document.cookie after fetch: "${document.cookie}"`);
-        setStatus({ kind: "establish_response", status: res.status, setCookieHeader, ok: res.ok });
-
         if (!res.ok) {
           throw new Error(`Establish failed: ${res.status}`);
         }
+        const json = (await res.json()) as { ok: boolean; token?: string; error?: string };
+        if (!json.ok || !json.token) {
+          throw new Error(json.error ?? "Establish returned no token");
+        }
+        pushLog(`Got token from /api/auth/establish (length ${json.token.length})`);
+
+        // Set the session cookie via document.cookie. Server-set
+        // cookies on this fetch are silently dropped by Brave; JS-set
+        // cookies persist normally on this domain (confirmed via
+        // /api/auth/cookie-test).
+        const cookieStr = buildClientSetCookie(json.token);
+        document.cookie = cookieStr;
+        pushLog(`Set cookie via document.cookie. document.cookie now: "${document.cookie.slice(0, 80)}…"`);
 
         try { popup.close(); } catch {}
 
-        // Wait a beat before navigating so the user can see the log
-        // and we can see whether the cookie persisted on this page
-        // before the navigation kills the JS context.
-        pushLog("Waiting 2s before navigating to /dashboard…");
-        await new Promise((r) => setTimeout(r, 2000));
-        pushLog(`document.cookie just before nav: "${document.cookie}"`);
+        pushLog("Navigating to /dashboard…");
         setStatus({ kind: "navigating" });
         window.location.href = "/dashboard";
       } catch (e) {

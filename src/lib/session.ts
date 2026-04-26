@@ -1,10 +1,10 @@
 import { cookies } from "next/headers";
+import { SESSION_COOKIE, SESSION_MAX_AGE } from "./session-shared";
 
-export const SESSION_COOKIE = "ss_session";
-export const SESSION_MAX_AGE = 60 * 24 * 60 * 60; // 60 days — matches Meta long-lived token
+export { SESSION_COOKIE, SESSION_MAX_AGE };
 
 export const sessionCookieOptions = {
-  httpOnly: true,
+  httpOnly: false as const,
   secure: true,
   sameSite: "lax" as const,
   path: "/",
@@ -15,8 +15,6 @@ export async function getAccessToken(): Promise<string | null> {
   const store = await cookies();
   const raw = store.get(SESSION_COOKIE)?.value;
   if (!raw) return null;
-  // Cookie value is URL-encoded on set (handles `|` and other chars
-  // Meta sometimes includes in tokens). Decode on read.
   try {
     return decodeURIComponent(raw);
   } catch {
