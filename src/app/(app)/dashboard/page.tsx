@@ -1,21 +1,59 @@
+import { redirect } from "next/navigation";
 import { AppTopbar } from "@/components/app-topbar";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Badge, StatusDot } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/button";
+import { getAccessToken } from "@/lib/session";
+import {
+  getMe,
+  listAdAccounts,
+  listCampaigns,
+  MetaAdAccount,
+  MetaApiError,
+  MetaCampaign,
+  MetaUser,
+} from "@/lib/meta";
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const token = await getAccessToken();
+  if (!token) redirect("/login");
+
+  let me: MetaUser | null = null;
+  let adAccounts: MetaAdAccount[] = [];
+  let firstAccountCampaigns: MetaCampaign[] = [];
+
+  try {
+    [me, adAccounts] = await Promise.all([getMe(token), listAdAccounts(token)]);
+    if (adAccounts[0]) {
+      try {
+        firstAccountCampaigns = await listCampaigns(token, adAccounts[0].id);
+      } catch {
+        // Insights may fail if the user just connected — non-fatal
+      }
+    }
+  } catch (e) {
+    if (e instanceof MetaApiError && e.status === 401) redirect("/login?error=token_invalid");
+  }
+
+  const activeCampaignCount = firstAccountCampaigns.filter((c) => c.status === "ACTIVE").length;
+  const firstName = me?.name?.split(" ")[0] ?? "there";
+
   return (
     <>
       <AppTopbar
         title="Overview"
-        subtitle="Grady's workspace · 1 connected account"
+        subtitle={`${firstName}'s workspace · ${adAccounts.length} connected account${adAccounts.length === 1 ? "" : "s"}`}
         action={<LinkButton href="/rules" size="sm" variant="secondary">+ New rule</LinkButton>}
       />
       <main className="flex-1 px-8 py-8">
         <div className="max-w-6xl mx-auto space-y-8">
           <section className="grid md:grid-cols-4 gap-4">
-            <Metric label="Ad accounts" value="1" hint="Test account" />
-            <Metric label="Active campaigns" value="3" hint="of 4 visible" />
+            <Metric label="Ad accounts" value={String(adAccounts.length)} hint={adAccounts[0]?.name ?? "None connected"} />
+            <Metric
+              label="Active campaigns"
+              value={String(activeCampaignCount)}
+              hint={firstAccountCampaigns.length ? `of ${firstAccountCampaigns.length} in ${adAccounts[0]?.name}` : "—"}
+            />
             <Metric label="Rules enabled" value="0" hint="Add your first" tone="amber" />
             <Metric label="Actions last 24h" value="0" hint="—" />
           </section>
@@ -31,7 +69,7 @@ export default function DashboardPage() {
                 <CardBody>
                   <EmptyState
                     title="No activity yet"
-                    body="Once you connect an ad account and enable a rule, every action will appear here — with the reason it fired and a way to revert it."
+                    body="Once you enable a rule, every action will appear here — with the reason it fired and a way to revert it."
                   />
                 </CardBody>
               </Card>
@@ -53,14 +91,20 @@ export default function DashboardPage() {
             <div className="space-y-5">
               <Card tone="ink">
                 <CardBody>
-                  <div className="text-xs uppercase tracking-wider text-amber font-medium">Get started</div>
-                  <h3 className="mt-2 font-display font-semibold text-xl">Connect a test ad account</h3>
+                  <div className="text-xs uppercase tracking-wider text-amber font-medium">Connected as</div>
+                  <h3 className="mt-2 font-display font-semibold text-xl">{me?.name ?? "Loading…"}</h3>
+                  {me?.email && (
+                    <p className="mt-1 text-cream/60 text-xs">{me.email}</p>
+                  )}
                   <p className="mt-2 text-cream/70 text-sm leading-relaxed">
-                    Your app is in testing mode. Create a Meta test ad account and connect it here to exercise API calls safely.
+                    Your app is in Development Mode. All API calls below are made with your own Meta token.
                   </p>
-                  <div className="mt-5">
+                  <div className="mt-5 flex gap-2">
                     <LinkButton href="/accounts" size="sm" variant="secondary" className="bg-cream text-ink">
-                      Connect account
+                      View accounts
+                    </LinkButton>
+                    <LinkButton href="/api/auth/logout" size="sm" variant="ghost" className="text-cream/70">
+                      Sign out
                     </LinkButton>
                   </div>
                 </CardBody>
@@ -69,10 +113,10 @@ export default function DashboardPage() {
               <Card>
                 <CardHeader title="Review status" />
                 <CardBody className="space-y-3 text-sm">
-                  <StatusRow label="App submitted" status="pending" note="Not yet" />
+                  <StatusRow label="OAuth working" status="ok" note="All scopes" />
                   <StatusRow label="Privacy policy" status="ok" note="scalescientist.com/privacy" />
-                  <StatusRow label="Test user created" status="pending" note="Pending" />
-                  <StatusRow label="API calls logged" status="pending" note="0 / 8" />
+                  <StatusRow label="Data deletion URL" status="ok" note="/data-deletion" />
+                  <StatusRow label="Access verification" status="pending" note="Pending" />
                 </CardBody>
               </Card>
             </div>
@@ -89,7 +133,7 @@ function Metric({ label, value, hint, tone = "default" }: { label: string; value
       <div className="text-xs text-ink-muted">{label}</div>
       <div className="mt-2 flex items-baseline justify-between">
         <span className="font-display font-bold text-3xl tracking-tight">{value}</span>
-        <span className={`text-xs ${tone === "amber" ? "text-amber-ink" : "text-ink-subtle"}`}>{hint}</span>
+        <span className={`text-xs ${tone === "amber" ? "text-amber-ink" : "text-ink-subtle"} truncate ml-2`}>{hint}</span>
       </div>
     </div>
   );

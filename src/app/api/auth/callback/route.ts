@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { env } from "@/lib/env";
+import { exchangeForLongLivedToken } from "@/lib/meta";
+import { SESSION_COOKIE, sessionCookieOptions } from "@/lib/session";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -19,7 +21,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${env.appUrl}/login?error=state_mismatch`);
   }
 
-  // Exchange code for short-lived access token
   const tokenUrl = new URL(`https://graph.facebook.com/${env.graphApiVersion}/oauth/access_token`);
   tokenUrl.searchParams.set("client_id", env.facebookAppId);
   tokenUrl.searchParams.set("client_secret", env.facebookAppSecret);
@@ -30,10 +31,18 @@ export async function GET(req: NextRequest) {
   if (!tokenRes.ok) {
     return NextResponse.redirect(`${env.appUrl}/login?error=token_exchange_failed`);
   }
+  const { access_token: shortLived } = (await tokenRes.json()) as { access_token: string };
 
-  // TODO: persist token, create session, upsert user.
-  // For now we just bounce to the dashboard so the review flow is navigable.
+  let longLived: string;
+  try {
+    const exchanged = await exchangeForLongLivedToken(shortLived);
+    longLived = exchanged.access_token;
+  } catch {
+    return NextResponse.redirect(`${env.appUrl}/login?error=long_token_exchange_failed`);
+  }
+
   const res = NextResponse.redirect(`${env.appUrl}/dashboard`);
+  res.cookies.set(SESSION_COOKIE, longLived, sessionCookieOptions);
   res.cookies.delete("fb_oauth_state");
   return res;
 }
