@@ -13,5 +13,13 @@ export const sessionCookieOptions = {
 
 export async function getAccessToken(): Promise<string | null> {
   const store = await cookies();
-  return store.get(SESSION_COOKIE)?.value ?? null;
+  const raw = store.get(SESSION_COOKIE)?.value;
+  if (!raw) return null;
+  // Cookie value is URL-encoded on set (handles `|` and other chars
+  // Meta sometimes includes in tokens). Decode on read.
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
