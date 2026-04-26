@@ -41,7 +41,42 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${env.appUrl}/login?error=long_token_exchange_failed`);
   }
 
-  const res = NextResponse.redirect(`${env.appUrl}/dashboard`);
+  // Set the cookie on a 200 HTML response (not a redirect). Safari/Brave
+  // both refuse to persist cookies set on redirects that came from a
+  // cross-site flow (facebook.com → here), so we render a tiny HTML page
+  // and JS-redirect to /dashboard once the cookie is stored.
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex">
+  <title>Signing in…</title>
+  <meta http-equiv="refresh" content="0; url=/dashboard">
+  <style>
+    body { font-family: system-ui, sans-serif; background: #F5F3EE; color: #1C1C1A; display: grid; place-items: center; min-height: 100vh; margin: 0; }
+    .box { text-align: center; }
+    .spinner { width: 28px; height: 28px; border: 3px solid #E5E1D6; border-top-color: #2D5C3F; border-radius: 50%; margin: 0 auto 16px; animation: spin 0.7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    p { margin: 0; font-size: 14px; color: #6B6860; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <div class="spinner" aria-hidden="true"></div>
+    <p>Signing you in…</p>
+  </div>
+  <script>window.location.replace('/dashboard');</script>
+  <noscript><a href="/dashboard">Continue</a></noscript>
+</body>
+</html>`;
+
+  const res = new NextResponse(html, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
   res.cookies.set(SESSION_COOKIE, longLived, sessionCookieOptions);
   res.cookies.delete("fb_oauth_state");
   return res;
