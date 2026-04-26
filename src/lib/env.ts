@@ -7,7 +7,6 @@ export const env = {
 
 export const metaScopes = [
   "public_profile",
-  "email",
   "pages_show_list",
   "pages_read_engagement",
   "pages_manage_ads",
