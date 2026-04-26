@@ -46,32 +46,39 @@ export async function GET(req: NextRequest) {
   // POSTs the token to /api/auth/establish via JavaScript. That POST is
   // initiated from our own page, so its response is a same-origin
   // request and the cookie set on it persists normally.
+  // We must NOT auto-submit. Chrome's Bounce Tracking Mitigation will
+  // purge any cookie set without explicit user interaction on this
+  // domain after returning from a cross-site OAuth flow. Requiring a
+  // button click registers user activation, which exempts the resulting
+  // navigation from the bounce heuristic.
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="robots" content="noindex">
-  <title>Signing in…</title>
+  <title>Almost done</title>
   <style>
-    body { font-family: system-ui, sans-serif; background: #F5F3EE; color: #1C1C1A; display: grid; place-items: center; min-height: 100vh; margin: 0; }
-    .box { text-align: center; }
-    .spinner { width: 28px; height: 28px; border: 3px solid #E5E1D6; border-top-color: #2D5C3F; border-radius: 50%; margin: 0 auto 16px; animation: spin 0.7s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    p { margin: 0; font-size: 14px; color: #6B6860; }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: #F5F3EE; color: #1C1C1A; display: grid; place-items: center; min-height: 100vh; margin: 0; padding: 1.5rem; }
+    .card { background: #FFFFFF; border: 1px solid #E5E1D6; border-radius: 12px; padding: 2rem; max-width: 28rem; width: 100%; text-align: center; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
+    .check { width: 48px; height: 48px; border-radius: 50%; background: #2D5C3F; color: #F5F3EE; display: grid; place-items: center; margin: 0 auto 1rem; font-size: 24px; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.5rem; letter-spacing: -0.01em; }
+    p { margin: 0 0 1.5rem; font-size: 0.875rem; color: #6B6860; line-height: 1.5; }
+    button { background: #2D5C3F; color: #F5F3EE; border: 0; border-radius: 8px; padding: 0.75rem 1.25rem; font-size: 0.875rem; font-weight: 500; cursor: pointer; width: 100%; transition: background 0.15s; }
+    button:hover { background: #244c33; }
+    button:focus-visible { outline: 2px solid #FBBF24; outline-offset: 2px; }
   </style>
 </head>
 <body>
-  <div class="box">
-    <div class="spinner" aria-hidden="true"></div>
-    <p>Signing you in…</p>
+  <div class="card">
+    <div class="check" aria-hidden="true">✓</div>
+    <h1>Connected to Meta</h1>
+    <p>One last step to finish signing in.</p>
+    <form method="post" action="/api/auth/establish">
+      <input type="hidden" name="token" value="${escapeHtmlAttr(longLived)}">
+      <button type="submit" autofocus>Continue to Scale Scientist</button>
+    </form>
   </div>
-  <form id="f" method="post" action="/api/auth/establish">
-    <input type="hidden" name="token" value="${escapeHtmlAttr(longLived)}">
-  </form>
-  <script>document.getElementById('f').submit();</script>
-  <noscript>
-    <p style="margin-top:1rem">JavaScript is required to finish signing in.</p>
-  </noscript>
 </body>
 </html>`;
 
