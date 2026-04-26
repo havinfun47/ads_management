@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { env } from "@/lib/env";
 import { exchangeForLongLivedToken } from "@/lib/meta";
-import { SESSION_COOKIE, sessionCookieOptions } from "@/lib/session";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -41,17 +40,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${env.appUrl}/login?error=long_token_exchange_failed`);
   }
 
-  // Set the cookie on a 200 HTML response (not a redirect). Safari/Brave
-  // both refuse to persist cookies set on redirects that came from a
-  // cross-site flow (facebook.com → here), so we render a tiny HTML page
-  // and JS-redirect to /dashboard once the cookie is stored.
+  // We can't set the session cookie here — Chrome treats cookies set on
+  // responses to requests that came from facebook.com as ephemeral
+  // (bounce-tracking mitigation). Instead, render a small HTML page that
+  // POSTs the token to /api/auth/establish via JavaScript. That POST is
+  // initiated from our own page, so its response is a same-origin
+  // request and the cookie set on it persists normally.
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="robots" content="noindex">
   <title>Signing in…</title>
-  <meta http-equiv="refresh" content="0; url=/dashboard">
   <style>
     body { font-family: system-ui, sans-serif; background: #F5F3EE; color: #1C1C1A; display: grid; place-items: center; min-height: 100vh; margin: 0; }
     .box { text-align: center; }
@@ -65,37 +65,28 @@ export async function GET(req: NextRequest) {
     <div class="spinner" aria-hidden="true"></div>
     <p>Signing you in…</p>
   </div>
-  <script>window.location.replace('/dashboard');</script>
-  <noscript><a href="/dashboard">Continue</a></noscript>
+  <form id="f" method="post" action="/api/auth/establish">
+    <input type="hidden" name="token" value="${escapeHtmlAttr(longLived)}">
+  </form>
+  <script>document.getElementById('f').submit();</script>
+  <noscript>
+    <p style="margin-top:1rem">JavaScript is required to finish signing in.</p>
+  </noscript>
 </body>
 </html>`;
-
-  // Build Set-Cookie header by hand to bypass any Next.js cookie API
-  // quirk. Two Set-Cookie headers — one to set the session, one to
-  // clear the OAuth state nonce.
-  const sessionCookie = [
-    `${SESSION_COOKIE}=${encodeURIComponent(longLived)}`,
-    `Path=/`,
-    `HttpOnly`,
-    `Secure`,
-    `SameSite=Lax`,
-    `Max-Age=${sessionCookieOptions.maxAge}`,
-  ].join("; ");
-
-  const clearStateCookie = [
-    `fb_oauth_state=`,
-    `Path=/`,
-    `Max-Age=0`,
-  ].join("; ");
 
   const headers = new Headers({
     "Content-Type": "text/html; charset=utf-8",
     "Cache-Control": "no-store",
   });
-  headers.append("Set-Cookie", sessionCookie);
-  headers.append("Set-Cookie", clearStateCookie);
+  // Clear the OAuth state nonce, but DO NOT set ss_session here.
+  headers.append("Set-Cookie", `fb_oauth_state=; Path=/; Max-Age=0`);
 
-  console.log("[oauth-callback] cookie set, token length:", longLived.length);
+  console.log("[oauth-callback] handing token off to /api/auth/establish, length:", longLived.length);
 
   return new NextResponse(html, { status: 200, headers });
+}
+
+function escapeHtmlAttr(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
