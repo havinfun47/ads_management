@@ -70,14 +70,32 @@ export async function GET(req: NextRequest) {
 </body>
 </html>`;
 
-  const res = new NextResponse(html, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
+  // Build Set-Cookie header by hand to bypass any Next.js cookie API
+  // quirk. Two Set-Cookie headers — one to set the session, one to
+  // clear the OAuth state nonce.
+  const sessionCookie = [
+    `${SESSION_COOKIE}=${encodeURIComponent(longLived)}`,
+    `Path=/`,
+    `HttpOnly`,
+    `Secure`,
+    `SameSite=Lax`,
+    `Max-Age=${sessionCookieOptions.maxAge}`,
+  ].join("; ");
+
+  const clearStateCookie = [
+    `fb_oauth_state=`,
+    `Path=/`,
+    `Max-Age=0`,
+  ].join("; ");
+
+  const headers = new Headers({
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
   });
-  res.cookies.set(SESSION_COOKIE, longLived, sessionCookieOptions);
-  res.cookies.delete("fb_oauth_state");
-  return res;
+  headers.append("Set-Cookie", sessionCookie);
+  headers.append("Set-Cookie", clearStateCookie);
+
+  console.log("[oauth-callback] cookie set, token length:", longLived.length);
+
+  return new NextResponse(html, { status: 200, headers });
 }
