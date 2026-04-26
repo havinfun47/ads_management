@@ -6,6 +6,10 @@ export async function GET(req: NextRequest) {
   const store = await cookies();
   const all = store.getAll();
   const session = store.get(SESSION_COOKIE);
+  const headersOut: Record<string, string> = {};
+  req.headers.forEach((value, key) => {
+    headersOut[key] = value;
+  });
 
   return NextResponse.json(
     {
@@ -14,7 +18,7 @@ export async function GET(req: NextRequest) {
       sessionCookiePreview: session?.value ? `${session.value.slice(0, 12)}…${session.value.slice(-4)}` : null,
       allCookieNames: all.map((c) => c.name),
       cookieHeaderRaw: req.headers.get("cookie"),
-      userAgent: req.headers.get("user-agent"),
+      requestHeaders: headersOut,
       timestamp: new Date().toISOString(),
     },
     { headers: { "Cache-Control": "no-store" } }

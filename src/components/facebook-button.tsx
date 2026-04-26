@@ -1,23 +1,42 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+type Status =
+  | { kind: "idle" }
+  | { kind: "opening" }
+  | { kind: "popup_opened" }
+  | { kind: "received_message"; data: unknown }
+  | { kind: "fetching" }
+  | { kind: "establish_response"; status: number; setCookieHeader: string | null; ok: boolean }
+  | { kind: "navigating" }
+  | { kind: "error"; message: string };
 
 export function FacebookLoginButton({
   authUrl = "/api/auth/facebook",
 }: {
   authUrl?: string;
 }) {
-  const [state, setState] = useState<"idle" | "opening" | "exchanging" | "error">("idle");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [log, setLog] = useState<string[]>([]);
+
+  function pushLog(line: string) {
+    const stamped = `[${new Date().toISOString().slice(11, 23)}] ${line}`;
+    console.log("[oauth]", line);
+    setLog((prev) => [...prev, stamped]);
+  }
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      pushLog(`document.cookie at mount: "${document.cookie}"`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleClick() {
-    setState("opening");
-    setErrorMsg(null);
+    setStatus({ kind: "opening" });
+    pushLog("Click. Opening popup at about:blank");
 
-    // Open Facebook OAuth in a popup window. We open it on a stub URL
-    // first (about:blank) so the popup is created during the user's
-    // click event — Brave/Safari block popups opened later in async
-    // handlers. We then navigate the popup to the OAuth URL.
     const w = 600, h = 720;
     const x = window.screenX + (window.outerWidth - w) / 2;
     const y = window.screenY + (window.outerHeight - h) / 2;
@@ -27,83 +46,108 @@ export function FacebookLoginButton({
       `width=${w},height=${h},left=${x},top=${y}`
     );
     if (!popup) {
-      setState("error");
-      setErrorMsg("Popup was blocked. Please allow popups for this site and try again.");
+      pushLog("ERROR: popup is null (blocked)");
+      setStatus({ kind: "error", message: "Popup was blocked. Please allow popups for this site and try again." });
       return;
     }
+    pushLog(`Popup opened. Navigating to ${authUrl}`);
     popup.location.href = authUrl;
+    setStatus({ kind: "popup_opened" });
 
-    // Listen for the popup to postMessage the access token back.
     const onMessage = async (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
+      pushLog(`window 'message' received from origin=${event.origin}`);
+      if (event.origin !== window.location.origin) {
+        pushLog(`  origin mismatch (expected ${window.location.origin}). Ignoring.`);
+        return;
+      }
       const data = event.data as { type?: string; token?: string; error?: string } | null;
+      pushLog(`  data.type="${data?.type}", hasToken=${!!data?.token}, hasError=${!!data?.error}`);
       if (!data || data.type !== "scale-scientist-oauth") return;
 
       window.removeEventListener("message", onMessage);
+      setStatus({ kind: "received_message", data });
 
       if (data.error) {
-        setState("error");
-        setErrorMsg(data.error);
+        pushLog(`Popup reported error: ${data.error}`);
+        setStatus({ kind: "error", message: `OAuth error: ${data.error}` });
         try { popup.close(); } catch {}
         return;
       }
 
       if (!data.token) {
-        setState("error");
-        setErrorMsg("No token returned from OAuth.");
+        pushLog("ERROR: no token in message");
+        setStatus({ kind: "error", message: "No token returned from OAuth." });
         try { popup.close(); } catch {}
         return;
       }
 
-      setState("exchanging");
+      pushLog(`Token received, length=${data.token.length}. Calling fetch /api/auth/establish`);
+      setStatus({ kind: "fetching" });
 
-      // POST the token to /api/auth/establish from THIS window. Because
-      // this fetch is initiated by JS on a page with established user
-      // interaction, the cookie set on the response is exempt from
-      // bounce-tracking purges. This is the whole point of the popup
-      // pattern.
       try {
         const body = new URLSearchParams({ token: data.token });
         const res = await fetch("/api/auth/establish", {
           method: "POST",
           body,
-          credentials: "include",
+          credentials: "same-origin",
         });
+        const setCookieHeader = res.headers.get("set-cookie");
+        pushLog(`fetch returned: status=${res.status} ok=${res.ok}`);
+        pushLog(`  set-cookie header (visible to JS? typically not): ${setCookieHeader ?? "null"}`);
+        pushLog(`  document.cookie after fetch: "${document.cookie}"`);
+        setStatus({ kind: "establish_response", status: res.status, setCookieHeader, ok: res.ok });
+
         if (!res.ok) {
           throw new Error(`Establish failed: ${res.status}`);
         }
+
         try { popup.close(); } catch {}
+
+        // Wait a beat before navigating so the user can see the log
+        // and we can see whether the cookie persisted on this page
+        // before the navigation kills the JS context.
+        pushLog("Waiting 2s before navigating to /dashboard…");
+        await new Promise((r) => setTimeout(r, 2000));
+        pushLog(`document.cookie just before nav: "${document.cookie}"`);
+        setStatus({ kind: "navigating" });
         window.location.href = "/dashboard";
       } catch (e) {
-        setState("error");
-        setErrorMsg(e instanceof Error ? e.message : "Failed to finish sign-in");
+        pushLog(`fetch error: ${e instanceof Error ? e.message : String(e)}`);
+        setStatus({ kind: "error", message: e instanceof Error ? e.message : "Failed to finish sign-in" });
         try { popup.close(); } catch {}
       }
     };
 
     window.addEventListener("message", onMessage);
+    pushLog("Listening for message from popup...");
 
-    // If the user closes the popup without finishing, reset state.
     const closedCheck = setInterval(() => {
       if (popup.closed) {
         clearInterval(closedCheck);
+        pushLog("Popup closed (poll detected).");
         window.removeEventListener("message", onMessage);
-        setState((s) => (s === "exchanging" ? s : "idle"));
       }
     }, 500);
   }
 
   const label =
-    state === "opening" ? "Connecting…"
-      : state === "exchanging" ? "Finishing sign-in…"
+    status.kind === "idle" ? "Continue with Facebook"
+      : status.kind === "opening" ? "Opening popup…"
+      : status.kind === "popup_opened" ? "Waiting on Facebook…"
+      : status.kind === "received_message" ? "Got token, exchanging…"
+      : status.kind === "fetching" ? "Setting session…"
+      : status.kind === "establish_response" ? `Got ${status.status}…`
+      : status.kind === "navigating" ? "Loading dashboard…"
       : "Continue with Facebook";
+
+  const disabled = status.kind !== "idle" && status.kind !== "error";
 
   return (
     <div>
       <button
         type="button"
         onClick={handleClick}
-        disabled={state === "opening" || state === "exchanging"}
+        disabled={disabled}
         className="group inline-flex w-full items-center justify-center gap-3 rounded-full bg-[#1877F2] hover:bg-[#166fe0] disabled:opacity-70 disabled:cursor-progress text-white h-12 px-6 font-medium text-[15px] transition-all active:scale-[0.99] shadow-[0_2px_6px_rgba(24,119,242,0.25)]"
       >
         <svg viewBox="0 0 24 24" className="size-5" aria-hidden>
@@ -114,8 +158,14 @@ export function FacebookLoginButton({
         </svg>
         {label}
       </button>
-      {errorMsg && (
-        <p className="mt-3 text-sm text-red-700">{errorMsg}</p>
+      {status.kind === "error" && (
+        <p className="mt-3 text-sm text-red-700">{status.message}</p>
+      )}
+      {log.length > 0 && (
+        <div className="mt-4 rounded-lg border border-line bg-cream-muted p-3">
+          <p className="text-[11px] font-medium text-ink-muted uppercase tracking-wider mb-2">Diagnostic log</p>
+          <pre className="text-[11px] leading-relaxed text-ink whitespace-pre-wrap font-mono">{log.join("\n")}</pre>
+        </div>
       )}
     </div>
   );
